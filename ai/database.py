@@ -1,14 +1,11 @@
+import os
 import mysql.connector
 
 conn = mysql.connector.connect(
-
-    host="sql304.infinityfree.com",
-
-    user="if0_42591666",
-
-    password="lYWKwj5rSZE",
-
-    database="if0_42591666_facescan_db"
+    host=os.getenv("DB_HOST"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASS"),
+    database=os.getenv("DB_NAME")
 )
 
 cursor = conn.cursor()
