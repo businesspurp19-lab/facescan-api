@@ -1,5 +1,10 @@
 fastapi
 uvicorn
-opencv-python-headless
-mysql-connector-python
+opencv-python
+numpy
+pillow
+insightface
+onnxruntime
+cython
+scikit-learn
 requests
