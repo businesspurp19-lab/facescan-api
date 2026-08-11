@@ -6,3 +6,5 @@ pillow
 onnxruntime
 requests
 mysql-connector-python
+insightface
+cython
