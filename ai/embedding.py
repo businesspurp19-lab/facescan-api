@@ -1,31 +1,15 @@
-from insightface.app import FaceAnalysis
 import mysql.connector
 import numpy as np
 import cv2
 import os
 
-# ==========================================
-# EXPLICIT PATH DEFINITIONS (Para walang ImportError)
-# ==========================================
 AI_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(AI_DIR)
 UPLOAD_FOLDER = os.path.join(PROJECT_ROOT, "uploads", "faces")
 EMBEDDING_FOLDER = os.path.join(AI_DIR, "embeddings")
 
-# Siguraduhing may embeddings folder
 if not os.path.exists(EMBEDDING_FOLDER):
     os.makedirs(EMBEDDING_FOLDER, exist_ok=True)
-
-# ==========================================
-# INSIGHTFACE
-# ==========================================
-
-app = FaceAnalysis(name="buffalo_l")
-app.prepare(ctx_id=0, det_size=(640, 640))
-
-# ==========================================
-# GENERATE EMBEDDING
-# ==========================================
 
 def generate_embedding(student_id):
     student_folder = os.path.join(UPLOAD_FOLDER, student_id)
@@ -53,26 +37,19 @@ def generate_embedding(student_id):
             print(f"[DEBUG] Failed to read image file: {file}")
             continue
 
-        # 1. Subukang i-detect gamit ang InsightFace sa original na imahe
-        faces = app.get(img)
+        resized = cv2.resize(img, (112, 112))
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        normalized = gray.astype(np.float32) / 255.0
+        embedding = normalized.flatten()
 
-        # 2. FALLBACK: Kung walang nakita, subukang lagyan ng padding (border) 
-        # sakaling ang imahe ay naka-crop nang masyadongikot sa mukha
-        if len(faces) == 0:
-            print(f"[DEBUG] Direct detection failed for {file}. Applying padding fallback...")
-            h, w, _ = img.shape
-            # Magdagdag ng 50 pixels na padding sa paligid para lumuwag ang mukha sa paningin ng AI
-            padded_img = cv2.copyMakeBorder(img, 50, 50, 50, 50, cv2.BORDER_CONSTANT, value=[255, 255, 255])
-            faces = app.get(padded_img)
+        norm = np.linalg.norm(embedding)
+        if norm > 0:
+            embedding = embedding / norm
 
-        if len(faces) == 0:
-            print(f"[DEBUG] No face detected by InsightFace even with padding in: {file}")
-            continue
-
-        embeddings.append(faces[0].embedding)
+        embeddings.append(embedding)
 
     if len(embeddings) == 0:
-        raise Exception("No valid faces detected.")
+        raise Exception("No valid faces processed.")
 
     print(f"[EMBEDDING] Successfully extracted {len(embeddings)}/{len(image_files)} valid face embeddings.")
 
@@ -85,10 +62,6 @@ def generate_embedding(student_id):
 
     return "completed"
 
-
-# ==========================================
-# AUTO-PROCESS ALL STUDENTS KUNG PINATAKBO DIREKTA
-# ==========================================
 if __name__ == "__main__":
     print("[INFO] Scanning upload folders for student embeddings...")
     if os.path.exists(UPLOAD_FOLDER):
