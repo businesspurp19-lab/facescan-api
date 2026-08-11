@@ -5,22 +5,22 @@ import sqlite3
 
 class LocalDatabaseManager:
 
-  def __init__(self, db_name="facescan_local.db"):
-    """Initializes the local SQLite data engine configuration."""
-    self.db_name = db_name
-    self.initialize_database()
+    def __init__(self, db_name="facescan_local.db"):
+        """Initializes the local SQLite data engine configuration."""
+        self.db_name = db_name
+        self.initialize_database()
 
-  def get_connection(self):
-    """Returns a thread-safe connection instance to the SQLite binary file."""
-    return sqlite3.connect(self.db_name)
+    def get_connection(self):
+        """Returns a thread-safe connection instance to the SQLite binary file."""
+        return sqlite3.connect(self.db_name)
 
-  def initialize_database(self):
-    """Automatically creates structural tables if they do not already exist."""
-    with self.get_connection() as conn:
-      cursor = conn.cursor()
+    def initialize_database(self):
+        """Automatically creates structural tables if they do not already exist."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
 
-      # 1. Table for the local copy of the Instructor Load Matrix (Sync Cache)
-      cursor.execute("""
+            # 1. Table for the local copy of the Instructor Load Matrix (Sync Cache)
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS cached_loads (
                     load_id INTEGER PRIMARY KEY,
                     instructor_id INTEGER NOT NULL,
@@ -32,8 +32,8 @@ class LocalDatabaseManager:
                 );
             """)
 
-      # 2. Table for the local attendance collection queue (Biometric Scan Buffers)
-      cursor.execute("""
+            # 2. Table for the local attendance collection queue (Biometric Scan Buffers)
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS local_attendance (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     student_id TEXT NOT NULL,
@@ -46,103 +46,140 @@ class LocalDatabaseManager:
                 );
             """)
 
-      # 3. Table for local session parameters and security logs
-      cursor.execute("""
+            # 3. Table for local session parameters and security logs
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS system_config (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
             """)
 
-      conn.commit()
-      print("[SUCCESS] Local SQLite schema initialization complete.")
+            # 4. Table for local students registration cache
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS students (
+                    student_id TEXT PRIMARY KEY,
+                    student_name TEXT,
+                    face_registered INTEGER DEFAULT 0,
+                    face_image TEXT,
+                    registered_at TEXT,
+                    embedding_file TEXT
+                );
+            """)
 
-  def cache_instructor_loads(self, loads_list):
-    """Temporarily stores active loads from the API sync for fully offline operation.
+            conn.commit()
+            print("[SUCCESS] Local SQLite schema initialization complete.")
 
-    Expects a list of dictionaries: [{'load_id':1, 'instructor_id':2, ...}]
-    """
-    with self.get_connection() as conn:
-      cursor = conn.cursor()
-      # Clear old cache to avoid operational conflicts
-      cursor.execute("DELETE FROM cached_loads")
+    def cache_instructor_loads(self, loads_list):
+        """Temporarily stores active loads from the API sync for fully offline operation.
 
-      for load in loads_list:
-        cursor.execute(
-            """
-                    INSERT INTO cached_loads (load_id, instructor_id, subject_id, subject_code, subject_name, room, schedule)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-            (
-                load["load_id"],
-                load["instructor_id"],
-                load["subject_id"],
-                load["subject_code"],
-                load["subject_name"],
-                load["room"],
-                load["schedule"],
-            ),
-        )
+        Expects a list of dictionaries: [{'load_id':1, 'instructor_id':2, ...}]
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # Clear old cache to avoid operational conflicts
+            cursor.execute("DELETE FROM cached_loads")
 
-      conn.commit()
-      print(
-          f"[CACHE] Successfully cached {len(loads_list)} subject loads"
-          " locally."
-      )
+            for load in loads_list:
+                cursor.execute(
+                    """
+                        INSERT INTO cached_loads (load_id, instructor_id, subject_id, subject_code, subject_name, room, schedule)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        load["load_id"],
+                        load["instructor_id"],
+                        load["subject_id"],
+                        load["subject_code"],
+                        load["subject_name"],
+                        load["room"],
+                        load["schedule"],
+                    ),
+                )
 
-  def log_local_attendance(
-      self, student_id, student_name, subject_id, instructor_id, status
-  ):
-    """Inserts a raw verified biometric event into the offline buffer queue."""
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with self.get_connection() as conn:
-      cursor = conn.cursor()
-      cursor.execute(
-          """
+            conn.commit()
+            print(
+                f"[CACHE] Successfully cached {len(loads_list)} subject loads"
+                " locally."
+            )
+
+    def update_student_face_registration(self, student_id, face_image, registered_at, embedding_file):
+        """Updates or inserts student registration details in the local SQLite database."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # Subukan muna i-update kung meron na ang student_id
+            cursor.execute("""
+                UPDATE students 
+                SET face_registered = 1, 
+                    face_image = ?, 
+                    registered_at = ?, 
+                    embedding_file = ? 
+                WHERE student_id = ? OR student_id = REPLACE(?, '-', '')
+            """, (face_image, registered_at, embedding_file, student_id, student_id))
+            
+            if cursor.rowcount == 0:
+                # Kung wala pa, i-insert natin
+                cursor.execute("""
+                    INSERT INTO students (student_id, face_registered, face_image, registered_at, embedding_file)
+                    VALUES (?, 1, ?, ?, ?)
+                """, (student_id, face_image, registered_at, embedding_file))
+                
+            conn.commit()
+            print(f"[SQLITE] Student {student_id} successfully registered locally.")
+            return True
+
+    def log_local_attendance(
+        self, student_id, student_name, subject_id, instructor_id, status
+    ):
+        """Inserts a raw verified biometric event into the offline buffer queue."""
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
                 INSERT INTO local_attendance (student_id, student_name, subject_id, instructor_id, timestamp, status, is_synced)
                 VALUES (?, ?, ?, ?, ?, ?, 0)
             """,
-          (
-              student_id,
-              student_name,
-              subject_id,
-              instructor_id,
-              current_time,
-              status,
-          ),
-      )
-      conn.commit()
-      print(f"[LOGGED] Offline transaction recorded for {student_id} - {status}")
-      return True
+                (
+                    student_id,
+                    student_name,
+                    subject_id,
+                    instructor_id,
+                    current_time,
+                    status,
+                ),
+            )
+            conn.commit()
+            print(f"[LOGGED] Offline transaction recorded for {student_id} - {status}")
+            return True
 
-  def get_pending_sync_records(self):
-    """Retrieves all attendance rows that have not yet been uploaded to the online ecosystem."""
-    with self.get_connection() as conn:
-      conn.row_factory = sqlite3.Row
-      cursor = conn.cursor()
-      cursor.execute("SELECT * FROM local_attendance WHERE is_synced = 0")
-      rows = cursor.fetchall()
-      return [dict(row) for row in rows]
+    def get_pending_sync_records(self):
+        """Retrieves all attendance rows that have not yet been uploaded to the online ecosystem."""
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM local_attendance WHERE is_synced = 0")
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
-  def mark_records_as_synced(self, record_ids):
-    """Updates the sync status flag after safe and successful API handshake validation."""
-    if not record_ids:
-      return
-    with self.get_connection() as conn:
-      cursor = conn.cursor()
-      placeholders = ",".join("?" for _ in record_ids)
-      cursor.execute(
-          f"UPDATE local_attendance SET is_synced = 1 WHERE id IN"
-          f" ({placeholders})",
-          record_ids,
-      )
-      conn.commit()
-      print(
-          f"[SYNC STATE] Marked {len(record_ids)} records as synchronized"
-          " successfully."
-      )
+    def mark_records_as_synced(self, record_ids):
+        """Updates the sync status flag after safe and successful API handshake validation."""
+        if not record_ids:
+            return
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in record_ids)
+            cursor.execute(
+                f"UPDATE local_attendance SET is_synced = 1 WHERE id IN"
+                f" ({placeholders})",
+                record_ids,
+            )
+            conn.commit()
+            print(
+                f"[SYNC STATE] Marked {len(record_ids)} records as synchronized"
+                " successfully."
+            )
 
 
 if __name__ == "__main__":
-  # Test script block for initialization validation
-  db = LocalDatabaseManager()
+    # Test script block for initialization validation
+    db = LocalDatabaseManager()
