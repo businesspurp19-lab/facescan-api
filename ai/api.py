@@ -76,13 +76,13 @@ def execute_embedding_and_sync(student_id: str):
         # 2. Refresh recognition system
         refresh()
         print(f"[PIPELINE] >>> refresh() finished.")
-        
-        # 3. MySQL Connection to update face_registered, face_image, and insert into face_embeddings
+
+        # 3. MySQL Connection using Environment Variables for remote/local flexibility
         connection = mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password="",
-            database="facescan_db"
+            host=os.getenv("DB_HOST", "localhost"),
+            user=os.getenv("DB_USER", "root"),
+            password=os.getenv("DB_PASSWORD", ""),
+            database=os.getenv("DB_NAME", "facescan_db")
         )
         cursor = connection.cursor()
         
