@@ -63,8 +63,7 @@ def format_student_id(raw_id: str) -> str:
 def execute_embedding_and_sync(student_id: str):
     """
     Finalizes embedding generation, refreshes the AI model, 
-    updates the MySQL database to set face_registered = 1,
-    saves the face image path, and inserts/updates the record in the face_embeddings table.
+    and updates the local SQLite database to mark the student as face-registered.
     """
     try:
         print(f"\n[PIPELINE] >>> Starting embedding & DB registration for: '{student_id}'")
@@ -76,50 +75,25 @@ def execute_embedding_and_sync(student_id: str):
         # 2. Refresh recognition system
         refresh()
         print(f"[PIPELINE] >>> refresh() finished.")
-
-        # 3. MySQL Connection using Environment Variables for remote/local flexibility
-        connection = mysql.connector.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            user=os.getenv("DB_USER", "root"),
-            password=os.getenv("DB_PASSWORD", ""),
-            database=os.getenv("DB_NAME", "facescan_db")
-        )
-        cursor = connection.cursor()
         
+        # 3. Update SQLite Database instead of external MySQL
         embedding_filename = f"{student_id}.npy"
         face_image_path = f"uploads/faces/{student_id}/1.jpg"
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # A. Update face_registered = 1, face_image, registered_at, and embedding_file in students table
-        update_query = """
-            UPDATE students 
-            SET face_registered = 1, 
-                face_image = %s, 
-                registered_at = %s, 
-                embedding_file = %s 
-            WHERE student_id = %s OR student_id = REPLACE(%s, '-', '')
-        """
-        cursor.execute(update_query, (face_image_path, current_time, embedding_filename, student_id, student_id))
+        success = db_manager.update_student_face_registration(
+            student_id=student_id,
+            face_image=face_image_path,
+            registered_at=current_time,
+            embedding_file=embedding_filename
+        )
         
-        # B. Insert or update record in face_embeddings table if it exists in schema
-        try:
-            insert_embedding_query = """
-                INSERT INTO face_embeddings (student_id, embedding_file) 
-                VALUES (%s, %s)
-                ON DUPLICATE KEY UPDATE embedding_file = VALUES(embedding_file)
-            """
-            cursor.execute(insert_embedding_query, (student_id, embedding_filename))
-        except Exception as db_err:
-            print(f"[PIPELINE NOTICE] face_embeddings table update skipped or not used: {db_err}")
-        
-        connection.commit()
-        print(f"[PIPELINE] Rows affected in students: {cursor.rowcount}")
-        
-        cursor.close()
-        connection.close()
-        
-        print(f"[PIPELINE] >>> Database updated successfully: '{student_id}' is registered.\n")
-        return True
+        if success:
+            print(f"[PIPELINE] >>> Local SQLite database updated successfully: '{student_id}' is registered.\n")
+            return True
+        else:
+            print(f"[PIPELINE ERROR] Failed to update local SQLite database for '{student_id}'.")
+            return False
         
     except Exception as e:
         print(f"\n[PIPELINE ERROR DETAILED]:")
