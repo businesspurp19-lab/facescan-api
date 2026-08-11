@@ -1,31 +1,9 @@
 import os
 import cv2
 import numpy as np
-from insightface.app import FaceAnalysis
 from ai.config import EMBEDDING_FOLDER, RECOGNITION_THRESHOLD
 
-# ==========================================
-# INSIGHTFACE MODEL
-# ==========================================
-# Ginamit ang 640x640 para maging pareho sa registration at mas madaling mamukaan ang mukha
-app = FaceAnalysis(
-    name="buffalo_l",
-    providers=["CPUExecutionProvider"]
-)
-
-app.prepare(
-    ctx_id=0,
-    det_size=(640, 640)
-)
-
-# ==========================================
-# GLOBAL EMBEDDINGS
-# ==========================================
 embeddings = {}
-
-# ==========================================
-# LOAD / REFRESH EMBEDDINGS
-# ==========================================
 
 def refresh():
     global embeddings
@@ -47,7 +25,6 @@ def refresh():
 
         try:
             embedding = np.load(path)
-            # SIGURUHING 1D ARRAY ITO PARA SA TAMANG COSINE SIMILARITY MATH
             embedding = np.squeeze(embedding)
             if embedding.ndim > 1:
                 embedding = embedding.flatten()
@@ -60,17 +37,12 @@ def refresh():
     print(f"[Recognition] Total loaded embeddings: {len(embeddings)}")
     return True
 
-# Awtomatikong i-load ang mga embeddings sa pagsisimula ng app
 refresh()
 
-# ==========================================
-# COSINE SIMILARITY
-# ==========================================
 def compare_faces(embedding1, embedding2):
     if embedding1 is None or embedding2 is None:
         return 0.0
 
-    # L2 Normalization para sa tumpak na angular distance match
     norm1 = np.linalg.norm(embedding1)
     norm2 = np.linalg.norm(embedding2)
     
@@ -82,34 +54,25 @@ def compare_faces(embedding1, embedding2):
 
     return float(np.dot(embedding1, embedding2))
 
-# ==========================================
-# FACE RECOGNITION ENGINE
-# ==========================================
 def recognize_face(frame):
-    if frame is None:
+    if frame is None or frame.size == 0:
         return None, 0.0, None
 
-    faces = app.get(frame)
+    resized = cv2.resize(frame, (112, 112))
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    normalized = gray.astype(np.float32) / 255.0
+    current_embedding = normalized.flatten()
+    
+    norm = np.linalg.norm(current_embedding)
+    if norm > 0:
+        current_embedding = current_embedding / norm
 
-    if len(faces) == 0:
-        return None, 0.0, None
-
-    face = faces[0]
-
-    # ==========================================
-    # PROTECTION LAYER: Detection Confidence Check
-    # ==========================================
-    det_score = getattr(face, 'det_score', 1.0)
-    if det_score < 0.50:  # Ibaba sa 0.50 para madaling masagap ang live frames
-        return None, 0.0, None
-
-    current_embedding = face.embedding
-    bbox = face.bbox.astype(int)
+    h, w, _ = frame.shape
+    bbox = np.array([0, 0, w, h])
 
     best_student = None
     best_score = -1.0 
 
-    # Mag-loop sa lahat ng rehistradong estudyante sa cache dictionary
     for student_id, saved_embedding in embeddings.items():
         score = compare_faces(current_embedding, saved_embedding)
 
@@ -117,18 +80,13 @@ def recognize_face(frame):
             best_score = score
             best_student = student_id
 
-    # I-convert ang raw similarity score sa readable confidence percentage (0-100%)
     confidence = round(max(0.0, best_score) * 100, 2)
 
-    # Ligtas na pagkumpara gamit ang hilaw na decimal score
     if best_score >= RECOGNITION_THRESHOLD:
         return best_student, confidence, bbox
 
     return None, confidence, bbox
 
-# ==========================================
-# REAL-TIME LIVE VIDEO ENGINE LOOP HOOK
-# ==========================================
 def recognize_live_stream(logger_instance, subject_id=None, subject_name=None, subject_code=None):
     video_capture = cv2.VideoCapture(0)
     
@@ -162,7 +120,6 @@ def recognize_live_stream(logger_instance, subject_id=None, subject_name=None, s
             if student_id != last_logged_student or (time.time() - cooldown_start_time) > COOLDOWN_DURATION:
                 mock_name = f"Student_{student_id}" 
                 
-                # Ipinapasa na ngayon ang subject variables patungo sa logger
                 success = logger_instance.log_face_match(
                     student_id=student_id,
                     student_name=mock_name,
